@@ -1,0 +1,4 @@
+(library
+    (name qq_client)
+    (public_name qq-client)
+    (libraries resp-client))
