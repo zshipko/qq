@@ -6,6 +6,12 @@ let port =
   in
   Key.(create "port" Arg.(opt int 1234 doc))
 
+let addr =
+  let doc =
+    Key.Arg.info ~doc:"Address to listen on for incomming connections" ["addr"]
+  in
+  Key.(create "addr" Arg.(opt string "0.0.0.0" doc))
+
 let auth =
   let doc =
     Key.Arg.info ~doc:"Authentication password for connecting clients" ["auth"]
@@ -14,7 +20,7 @@ let auth =
 
 let main =
   foreign
-    ~keys:[Key.abstract port; Key.abstract auth]
+    ~keys:[Key.abstract port; Key.abstract auth; Key.abstract addr]
     ~packages:[package "resp-lwt-mirage"]
     ~deps:[abstract nocrypto] "Unikernel.Main"
     (console @-> conduit @-> job)

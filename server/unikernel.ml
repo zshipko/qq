@@ -37,7 +37,7 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
   let commands = [("push", push); ("pop", pop); ("length", length)]
 
   let start console conduit _nocrypto =
-    `TCP (Ipaddr.of_string_exn "0.0.0.0", Key_gen.port ())
+    `TCP (Ipaddr.of_string_exn (Key_gen.addr ()), Key_gen.port ())
     |> Conduit_mirage.server
     >>= fun endp ->
     let server =
