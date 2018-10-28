@@ -28,40 +28,49 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     set_q d k q
 
   let push ctx client _ nargs =
-    Server.recv client
-    >>= fun key ->
-    Server.recv client
-    >>= fun item ->
-    ( if nargs = 1 then Lwt.return default_priority
-    else Server.recv client >|= fun p -> Resp.to_integer_exn p |> Int64.to_int
-    )
-    >>= fun priority ->
-    ctx :=
-      with_q !ctx (Resp.to_string_exn key) (fun q -> Qq.push q priority item);
-    Server.send client (`String "OK")
+    if nargs < 2 then Server.invalid_arguments client
+    else
+      Server.recv client
+      >>= fun key ->
+      Server.recv client
+      >>= fun item ->
+      ( if nargs = 2 then Lwt.return default_priority
+      else
+        Server.recv client >|= fun p -> Resp.to_integer_exn p |> Int64.to_int
+      )
+      >>= fun priority ->
+      ctx :=
+        with_q !ctx (Resp.to_string_exn key) (fun q -> Qq.push q priority item);
+      Server.send client (`String "OK")
 
   let pop ctx client _ nargs =
-    Server.recv client
-    >>= fun key ->
-    let q = get_q !ctx (Resp.to_string_exn key) in
-    match Qq.pop q with
-    | None ->
-      Server.send client `Nil
-    | Some ((p, e), q) ->
-      ctx := set_q !ctx (Resp.to_string_exn key) q;
-      Server.send client (`Array [|e; `Integer (Int64.of_int p)|])
+    if nargs < 1 then Server.invalid_arguments client
+    else
+      Server.recv client
+      >>= fun key ->
+      let q = get_q !ctx (Resp.to_string_exn key) in
+      match Qq.pop q with
+      | None ->
+        Server.send client `Nil
+      | Some ((p, e), q) ->
+        ctx := set_q !ctx (Resp.to_string_exn key) q;
+        Server.send client (`Array [|e; `Integer (Int64.of_int p)|])
 
   let del ctx client _ nargs =
-    Server.recv client
-    >>= fun key ->
-    ctx := del_q !ctx (Resp.to_string_exn key);
-    Server.ok client
+    if nargs < 1 then Server.invalid_arguments client
+    else
+      Server.recv client
+      >>= fun key ->
+      ctx := del_q !ctx (Resp.to_string_exn key);
+      Server.ok client
 
   let length ctx client _ nargs =
-    Server.recv client
-    >>= fun key ->
-    let q = get_q !ctx (Resp.to_string_exn key) in
-    Server.send client (`Integer (Qq.length q))
+    if nargs < 1 then Server.invalid_arguments client
+    else
+      Server.recv client
+      >>= fun key ->
+      let q = get_q !ctx (Resp.to_string_exn key) in
+      Server.send client (`Integer (Qq.length q))
 
   let list ctx client _ nargs =
     Server.discard_n client nargs
@@ -84,5 +93,9 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
       Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, endp)
         (ref Dict.empty)
     in
-    Server.start server
+    let msg =
+      Printf.sprintf "Running qq-server on %s:%d" (Key_gen.addr ())
+        (Key_gen.port ())
+    in
+    Console.log console msg >>= fun () -> Server.start server
 end
