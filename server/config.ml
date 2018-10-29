@@ -26,6 +26,4 @@ let main =
     (console @-> conduit @-> job)
 
 let stack = socket_stackv4 [Ipaddr.V4.any]
-
-let () =
-  register "qq-server" [main $ default_console $ conduit_direct ~tls:true stack]
+let () = register "qq" [main $ default_console $ conduit_direct ~tls:true stack]

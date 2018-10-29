@@ -1,16 +1,18 @@
 type priority = int
 
+let default_priority = 100
+
 type 'a t =
   | Empty
   | Node of priority * 'a * 'a t * 'a t
 
-let rec push q priority0 elt =
+let rec push q ?(priority = default_priority) elt =
   match q with
   | Empty ->
-    Node (priority0, elt, Empty, Empty)
+    Node (priority, elt, Empty, Empty)
   | Node (p, e, l, r) ->
-    if priority0 <= p then Node (priority0, elt, push r p e, l)
-    else Node (p, e, push r priority0 elt, l)
+    if priority < p then Node (priority, elt, push r ~priority:p e, l)
+    else Node (p, e, push r ~priority elt, l)
 
 let rec remove_top = function
   | Empty ->

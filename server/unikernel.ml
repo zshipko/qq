@@ -1,8 +1,5 @@
 open Mirage_types_lwt
 open Lwt.Infix
-
-let default_priority = 100
-
 module Dict = Map.Make (String)
 
 module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
@@ -34,13 +31,13 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
       >>= fun key ->
       Server.recv client
       >>= fun item ->
-      ( if nargs = 2 then Lwt.return default_priority
+      ( if nargs = 2 then Lwt.return_none
       else
-        Server.recv client >|= fun p -> Resp.to_integer_exn p |> Int64.to_int
-      )
+        Server.recv client
+        >|= fun p -> Some (Resp.to_integer_exn p |> Int64.to_int) )
       >>= fun priority ->
       ctx :=
-        with_q !ctx (Resp.to_string_exn key) (fun q -> Qq.push q priority item);
+        with_q !ctx (Resp.to_value_exn key) (fun q -> Qq.push q ?priority item);
       Server.send client (`String "OK")
 
   let pop ctx client _ nargs =
@@ -48,12 +45,12 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     else
       Server.recv client
       >>= fun key ->
-      let q = get_q !ctx (Resp.to_string_exn key) in
+      let q = get_q !ctx (Resp.to_value_exn key) in
       match Qq.pop q with
       | None ->
         Server.send client `Nil
       | Some ((p, e), q) ->
-        ctx := set_q !ctx (Resp.to_string_exn key) q;
+        ctx := set_q !ctx (Resp.to_value_exn key) q;
         Server.send client (`Array [|e; `Integer (Int64.of_int p)|])
 
   let del ctx client _ nargs =
@@ -61,7 +58,7 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     else
       Server.recv client
       >>= fun key ->
-      ctx := del_q !ctx (Resp.to_string_exn key);
+      ctx := del_q !ctx (Resp.to_value_exn key);
       Server.ok client
 
   let length ctx client _ nargs =
@@ -69,7 +66,7 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     else
       Server.recv client
       >>= fun key ->
-      let q = get_q !ctx (Resp.to_string_exn key) in
+      let q = get_q !ctx (Resp.to_value_exn key) in
       Server.send client (`Integer (Qq.length q))
 
   let list ctx client _ nargs =
@@ -86,6 +83,8 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     ; ("del", del) ]
 
   let start console conduit _nocrypto =
+    Conduit.with_tls conduit
+    >>= fun conduit ->
     `TCP (Ipaddr.of_string_exn (Key_gen.addr ()), Key_gen.port ())
     |> Conduit_mirage.server
     >>= fun endp ->
