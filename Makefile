@@ -1,4 +1,5 @@
 BACKEND?=unix
+prefix?=/usr/local
 
 build: server client
 
@@ -10,6 +11,11 @@ server:
 client:
 	dune build
 
+install:
+	install server/qq $(prefix)/bin
+
+uninstall:
+	rm -rf $(prefix)/bin/qq
 
 clean:
 	cd server && mirage clean

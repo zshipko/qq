@@ -25,5 +25,5 @@ let main =
     ~deps:[abstract nocrypto] "Unikernel.Main"
     (console @-> conduit @-> job)
 
-let stack = socket_stackv4 [Ipaddr.V4.any]
+let stack = static_ipv4_stack default_network
 let () = register "qq" [main $ default_console $ conduit_direct ~tls:true stack]
