@@ -3,26 +3,31 @@ open Lwt.Infix
 module Dict = Map.Make (String)
 
 module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
-  module Data = struct type data = string Resp.t Qq.t Dict.t ref end
+  type qq =
+    { mutable map : string Resp.t Qq.t Dict.t
+    ; mutex : Lwt_mutex.t }
+
+  module Data = struct type data = qq end
 
   module Server =
     Resp_lwt_mirage.Server.Make (Resp_server.Auth.String) (Data)
       (Resp_lwt_mirage.Bulk.String)
 
-  let get_q d k =
-    match Dict.find_opt k d with
+  let get_q ctx k =
+    match Dict.find_opt k ctx.map with
     | Some x ->
       x
     | None ->
       Qq.empty
 
-  let set_q d k v = Dict.update k (fun _ -> Some v) d
-  let del_q d k = Dict.remove k d
+  let set_q ctx k v = ctx.map <- Dict.update k (fun _ -> Some v) ctx.map
+  let del_q ctx k = ctx.map <- Dict.remove k ctx.map
 
-  let with_q d k f =
-    let q = get_q d k in
-    let q = f q in
-    set_q d k q
+  let with_q ctx k f =
+    Lwt_mutex.with_lock ctx.mutex (fun () ->
+        let q = get_q ctx k in
+        let q = f q in
+        set_q ctx k q; Lwt.return_unit )
 
   let push ctx client _ nargs =
     if nargs < 2 then Server.invalid_arguments client
@@ -36,29 +41,30 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
         Server.recv client
         >|= fun p -> Some (Resp.to_integer_exn p |> Int64.to_int) )
       >>= fun priority ->
-      ctx :=
-        with_q !ctx (Resp.to_value_exn key) (fun q -> Qq.push q ?priority item);
-      Server.send client (`String "OK")
+      with_q ctx (Resp.to_value_exn key) (fun q -> Qq.push q ?priority item)
+      >>= fun () -> Server.send client (`String "OK")
 
   let pop ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
       Server.recv client
       >>= fun key ->
-      let q = get_q !ctx (Resp.to_value_exn key) in
-      match Qq.pop q with
-      | None ->
-        Server.send client `Nil
-      | Some ((p, e), q) ->
-        ctx := set_q !ctx (Resp.to_value_exn key) q;
-        Server.send client (`Array [|e; `Integer (Int64.of_int p)|])
+      let key = Resp.to_value_exn key in
+      Lwt_mutex.with_lock ctx.mutex (fun () ->
+          let q = get_q ctx key in
+          match Qq.pop q with
+          | None ->
+            Server.send client `Nil
+          | Some ((p, e), q) ->
+            set_q ctx key q;
+            Server.send client (`Array [|e; `Integer (Int64.of_int p)|]) )
 
   let del ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
       Server.recv client
       >>= fun key ->
-      ctx := del_q !ctx (Resp.to_value_exn key);
+      del_q ctx (Resp.to_value_exn key);
       Server.ok client
 
   let length ctx client _ nargs =
@@ -66,21 +72,24 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     else
       Server.recv client
       >>= fun key ->
-      let q = get_q !ctx (Resp.to_value_exn key) in
+      let q = get_q ctx (Resp.to_value_exn key) in
       Server.send client (`Integer (Qq.length q))
 
   let list ctx client _ nargs =
     Server.discard_n client nargs
     >>= fun () ->
-    let x = Dict.fold (fun k _ acc -> `Bulk (`String k) :: acc) !ctx [] in
+    let x = Dict.fold (fun k _ acc -> `Bulk (`String k) :: acc) ctx.map [] in
     Server.send client (`Array (Array.of_list x))
+
+  let wrap f ctx client cmd nargs =
+    Lwt_mutex.with_lock ctx.mutex (fun () -> f ctx client cmd nargs)
 
   let commands =
     [ ("push", push)
     ; ("pop", pop)
     ; ("length", length)
-    ; ("list", list)
-    ; ("del", del) ]
+    ; ("list", wrap list)
+    ; ("del", wrap del) ]
 
   let start console conduit _nocrypto =
     Conduit.with_tls conduit
@@ -90,7 +99,7 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     >>= fun endp ->
     let server =
       Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, endp)
-        (ref Dict.empty)
+        {map = Dict.empty; mutex = Lwt_mutex.create ()}
     in
     let msg =
       Printf.sprintf "Running qq-server on %s:%d" (Key_gen.addr ())
