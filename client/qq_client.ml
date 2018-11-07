@@ -25,7 +25,7 @@ module Make (Client : Resp_client.S) = struct
       [| `Bulk (`String "push")
        ; `Bulk (`String key)
        ; `Bulk (`Value value)
-       ; `Integer (Int64.of_int priority) |]
+       ; `Bulk (`String (string_of_int priority)) |]
     >>= C.decode client
     >>= function
     | `String "OK" ->
