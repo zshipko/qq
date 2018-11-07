@@ -39,7 +39,7 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
       ( if nargs = 2 then Lwt.return_none
       else
         Server.recv client
-        >|= fun p -> Some (Resp.to_integer_exn p |> Int64.to_int) )
+        >|= fun p -> Some (Resp.to_value_exn p |> int_of_string) )
       >>= fun priority ->
       with_q ctx (Resp.to_value_exn key) (fun q -> Qq.push q ?priority item)
       >>= fun () -> Server.send client (`String "OK")
