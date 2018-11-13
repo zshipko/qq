@@ -32,24 +32,24 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
   let push ctx client _ nargs =
     if nargs < 2 then Server.invalid_arguments client
     else
-      Server.recv client
+      Server.recv_s client
       >>= fun key ->
       Server.recv client
       >>= fun item ->
       ( if nargs = 2 then Lwt.return_none
       else
-        Server.recv client
-        >|= fun p -> Some (Resp.to_value_exn p |> int_of_string) )
+        Server.recv_s client
+        >|= fun p -> Some (Resp.to_string_exn p |> int_of_string) )
       >>= fun priority ->
-      with_q ctx (Resp.to_value_exn key) (fun q -> Qq.push q ?priority item)
+      with_q ctx (Resp.to_string_exn key) (fun q -> Qq.push q ?priority item)
       >>= fun () -> Server.send client (`String "OK")
 
   let pop ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv client
+      Server.recv_s client
       >>= fun key ->
-      let key = Resp.to_value_exn key in
+      let key = Resp.to_string_exn key in
       Lwt_mutex.with_lock ctx.mutex (fun () ->
           let q = get_q ctx key in
           match Qq.pop q with
@@ -62,17 +62,17 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
   let del ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv client
+      Server.recv_s client
       >>= fun key ->
-      del_q ctx (Resp.to_value_exn key);
+      del_q ctx (Resp.to_string_exn key);
       Server.ok client
 
   let length ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv client
+      Server.recv_s client
       >>= fun key ->
-      let q = get_q ctx (Resp.to_value_exn key) in
+      let q = get_q ctx (Resp.to_string_exn key) in
       Server.send client (`Integer (Qq.length q))
 
   let list ctx client _ nargs =

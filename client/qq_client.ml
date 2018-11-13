@@ -4,11 +4,20 @@ module type S = sig
   type t = C.ic * C.oc
 
   val connect : C.params -> t C.IO.t
-  val push : t -> ?priority:int -> string -> C.bulk -> bool C.IO.t
-  val pop : t -> string -> (C.bulk * int) option C.IO.t
-  val length : t -> string -> int64 C.IO.t
-  val list : t -> string array C.IO.t
-  val del : t -> string -> bool C.IO.t
+
+  val push :
+       t
+    -> ?priority:int
+    -> string
+    -> C.bulk
+    -> (unit, [`Msg of string]) result C.IO.t
+
+  val pop :
+    t -> string -> ((C.bulk * int) option, [`Msg of string]) result C.IO.t
+
+  val length : t -> string -> (int64, [`Msg of string]) result C.IO.t
+  val list : t -> (string array, [`Msg of string]) result C.IO.t
+  val del : t -> string -> (unit, [`Msg of string]) result C.IO.t
 end
 
 module Make (Client : Resp_client.S) = struct
@@ -26,46 +35,58 @@ module Make (Client : Resp_client.S) = struct
        ; `Bulk (`String key)
        ; `Bulk (`Value value)
        ; `Bulk (`String (string_of_int priority)) |]
-    >>= C.decode client
+    >>= C.decode_s client
     >>= function
     | `String "OK" ->
-      return true
+      return (Ok ())
+    | `Error e ->
+      return (Error (`Msg e))
     | _ ->
-      return false
+      return (Error (`Msg "unexpected response type"))
 
   let pop client key =
     C.run_s client [|"pop"; key|]
     >>= C.decode client
     >>= function
     | `Array [|`Bulk (`Value value); `Integer i|] ->
-      return (Some (value, Int64.to_int i))
+      return (Ok (Some (value, Int64.to_int i)))
+    | `Nil ->
+      return (Ok None)
+    | `Error e ->
+      return (Error (`Msg e))
     | _ ->
-      return None
+      return (Error (`Msg "unexpected response type"))
 
   let length client key =
     C.run_s client [|"length"; key|]
-    >>= C.decode client
+    >>= C.decode_s client
     >>= function
     | `Integer i ->
-      return @@ i
+      return @@ Ok i
+    | `Error e ->
+      return (Error (`Msg e))
     | _ ->
-      return 0L
+      return (Error (`Msg "unexpected response type"))
 
   let list client =
     C.run_s client [|"list"|]
-    >>= C.decode client
+    >>= C.decode_s client
     >>= function
     | `Array a ->
-      return @@ Array.map Resp.to_string_exn a
+      return @@ Ok (Array.map Resp.to_string_exn a)
+    | `Error e ->
+      return (Error (`Msg e))
     | _ ->
-      return [||]
+      return (Error (`Msg "unexpected response type"))
 
   let del client key =
     C.run_s client [|"del"; key|]
-    >>= C.decode client
+    >>= C.decode_s client
     >>= function
     | `String "OK" ->
-      return true
+      return (Ok ())
+    | `Error e ->
+      return (Error (`Msg e))
     | _ ->
-      return false
+      return (Error (`Msg "unexpected response type"))
 end
