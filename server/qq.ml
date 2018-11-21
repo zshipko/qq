@@ -54,23 +54,46 @@ let rec length = function
   | Node (_, _, l, r) ->
     Int64.(succ (add (length l) (length r)))
 
+let rec join a = function
+  | Empty ->
+    a
+  | Node (p, e, l, r) ->
+    let a = push a ~priority:p e in
+    let a = join a l in
+    join a r
+
+let rec to_list = function
+  | Empty ->
+    []
+  | Node (p, e, l, r) ->
+    ((p, e) :: to_list l) @ to_list r
+
+let from_list l =
+  let rec aux q = function
+    | [] ->
+      Empty
+    | (p, e) :: t ->
+      aux (push q ~priority:p e) t
+  in
+  aux empty l
+
 module Make (Contents : Irmin.Type.S) = struct
   type 'a q = 'a t
   type t = Contents.t q
 
-  let t =
-    Irmin.Type.(
-      mu (fun t ->
-          variant "qq" (fun empty node -> function
-            | Empty ->
-              empty
-            | Node (p, e, l, r) ->
-              node ((p, e), l, r) )
-          |~ case0 "Empty" Empty
-          |~ case1 "Node"
-               (triple (pair int Contents.t) t t)
-               (fun ((p, e), l, r) -> Node (p, e, l, r))
-          |> sealv ))
+  let t = Irmin.Type.(like (list (pair int Contents.t)) from_list to_list)
 
-  let merge = Irmin.Merge.(option (default t))
+  let merge ~old a b =
+    let open Irmin.Merge.Infix in
+    old ()
+    >>=* fun old ->
+    match old with
+    | Some old ->
+      if Irmin.Type.equal t a old then Irmin.Merge.ok b
+      else if Irmin.Type.equal t b old then Irmin.Merge.ok a
+      else Irmin.Merge.ok (join a b)
+    | None ->
+      Irmin.Merge.ok (join a b)
+
+  let merge = Irmin.Merge.(option (v t merge))
 end

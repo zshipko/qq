@@ -1,51 +1,7 @@
 open Mirage_types_lwt
 open Lwt.Infix
 module Dict = Map.Make (String)
-
-module Resp_contents = struct
-  type t = string Resp.t
-
-  let t =
-    Irmin.Type.(
-      mu (fun t ->
-          variant "Resp"
-            (fun nil
-            integer
-            string
-            error
-            array
-            bulk_string
-            bulk_value
-            (x : string Resp.t)
-            ->
-              match x with
-              | `Nil ->
-                nil
-              | `Integer i ->
-                integer i
-              | `String s ->
-                string s
-              | `Error e ->
-                error e
-              | `Array a ->
-                array a
-              | `Bulk (`String s) ->
-                bulk_string s
-              | `Bulk (`Value s) ->
-                bulk_value s )
-          |~ case0 "Nil" `Nil
-          |~ case1 "Integer" int64 (fun i -> `Integer i)
-          |~ case1 "String" string (fun s -> `String s)
-          |~ case1 "Error" string (fun s -> `Error s)
-          |~ case1 "Array" (array t) (fun x -> `Array x)
-          |~ case1 "BulkValue" string (fun x -> `Bulk (`Value x))
-          |~ case1 "BulkString" string (fun x -> `Bulk (`String x))
-          |> sealv ))
-
-  let merge = Irmin.Merge.(option (default t))
-end
-
-module Contents = Qq.Make (Resp_contents)
+module Contents = Qq.Make (Irmin.Contents.String)
 module Store = Irmin_mirage.Git.Mem.KV (Contents)
 module Sync = Irmin.Sync (Store)
 
@@ -118,8 +74,9 @@ struct
     else
       Server.recv_s client
       >>= fun key ->
-      Server.recv client
+      Server.recv_s client
       >>= fun item ->
+      let item = Resp.to_string_exn item in
       ( if nargs = 2 then Lwt.return_none
       else
         Server.recv_s client
@@ -144,7 +101,8 @@ struct
           | None ->
             Server.send client `Nil >|= fun () -> Some q
           | Some ((p, e), q) ->
-            Server.send client (`Array [|e; `Integer (Int64.of_int p)|])
+            Server.send client
+              (`Array [|`Bulk (`Value e); `Integer (Int64.of_int p)|])
             >|= fun () -> Some q )
 
   let del ctx client _ nargs =
@@ -213,52 +171,12 @@ struct
       ctx.branch <- branch;
       Server.finish client ~nargs 1 >>= fun () -> Server.ok client
 
-  let sync ctx client _ nargs =
-    if nargs < 2 then
-      Server.finish client ~nargs 0
-      >>= fun () -> Server.invalid_arguments client
-    else
-      Server.recv_s client
-      >>= fun subcommand ->
-      let subcommand = Resp.to_string_exn subcommand in
-      get_store ctx
-      >>= fun t ->
-      Server.recv_s client
-      >>= fun remote ->
-      let remote = Resp.to_string_exn remote in
-      let headers =
-        let headers = Cohttp.Header.init () in
-        if nargs > 3 then
-          Server.recv_s client
-          >>= fun user ->
-          let user = Resp.to_string_exn user in
-          Server.recv_s client
-          >>= fun token ->
-          let token = Resp.to_string_exn token in
-          Server.finish client ~nargs 4
-          >|= fun () ->
-          Cohttp.Header.add_authorization headers (`Basic (user, token))
-        else Server.finish client ~nargs 2 >|= fun () -> headers
-      in
-      headers
-      >>= fun headers ->
-      match String.lowercase_ascii subcommand with
-      | "pull" ->
-        Sync.pull_exn t (Store.remote ~headers remote) `Set
-        >>= fun () -> Server.ok client
-      | "push" ->
-        Sync.push_exn t (Store.remote ~headers remote)
-        >>= fun () -> Server.ok client
-      | c ->
-        Server.error client ("Invalid subcommand: " ^ c)
-
   let commands =
     [ ("push", push)
     ; ("pop", pop)
     ; ("length", length)
     ; ("list", list)
     ; ("del", del)
-    ; ("sync", sync)
     ; ("branch", branch) ]
 
   let start console conduit pclock kv _nocrypto =
