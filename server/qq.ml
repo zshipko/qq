@@ -40,6 +40,14 @@ let pop q =
   | Node (p, e, _, _) ->
     Some ((p, e), remove_top q)
 
+let rec join a = function
+  | Empty ->
+    a
+  | Node (p, e, l, r) ->
+    let a = push a ~priority:p e in
+    let a = join a l in
+    join a r
+
 let empty = Empty
 
 let is_empty = function
@@ -53,3 +61,18 @@ let rec length = function
     Int64.zero
   | Node (_, _, l, r) ->
     Int64.(succ (add (length l) (length r)))
+
+let rec to_list = function
+  | Empty ->
+    []
+  | Node (p, e, l, r) ->
+    ((p, e) :: to_list l) @ to_list r
+
+let from_list l =
+  let rec aux q = function
+    | [] ->
+      Empty
+    | (p, e) :: t ->
+      aux (push q ~priority:p e) t
+  in
+  aux empty l
