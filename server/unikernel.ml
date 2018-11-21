@@ -95,27 +95,6 @@ struct
     let x = Dict.fold (fun k _ acc -> `Bulk (`String k) :: acc) ctx.map [] in
     Server.send client (`Array (Array.of_list x))
 
-  let dump ctx client _ nargs =
-    if nargs = 0 then
-      let s = Marshal.to_string ctx.map [] in
-      Server.send client (`Bulk (`String s))
-    else
-      Server.discard_n client nargs
-      >>= fun () -> Server.invalid_arguments client
-
-  let load ctx client _ nargs =
-    if nargs = 1 then
-      Server.recv_s client
-      >>= fun s ->
-      let s = Resp.to_string_exn s in
-      try
-        ctx.map <- Marshal.from_string s 0;
-        Server.finish client ~nargs 1 >>= fun () -> Server.ok client
-      with Invalid_argument _ -> Server.error client "Invalid argument"
-    else
-      Server.discard_n client nargs
-      >>= fun () -> Server.invalid_arguments client
-
   let wrap_lock f ctx client cmd nargs =
     Lwt_mutex.with_lock ctx.mutex (fun () -> f ctx client cmd nargs)
 
@@ -124,9 +103,7 @@ struct
     ; ("pop", pop)
     ; ("del", del)
     ; ("length", wrap_lock length)
-    ; ("list", wrap_lock list)
-    ; ("dump", wrap_lock dump)
-    ; ("load", wrap_lock load) ]
+    ; ("list", wrap_lock list) ]
 
   let start console conduit pclock kv _nocrypto =
     let tcp = `TCP (Key_gen.port ()) in
