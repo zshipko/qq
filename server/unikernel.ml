@@ -2,7 +2,7 @@ open Mirage_types_lwt
 open Lwt.Infix
 module Dict = Map.Make (String)
 
-module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
+module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) (Pclock: PCLOCK) (KV: Mirage_kv_lwt.RO) = struct
   type qq =
     { mutable map : string Resp.t Qq.t Dict.t
     ; mutex : Lwt_mutex.t }
@@ -91,14 +91,19 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) = struct
     ; ("list", wrap list)
     ; ("del", wrap del) ]
 
-  let start console conduit _nocrypto =
+  let start console conduit _pclock kv _nocrypto =
+    let tcp = `TCP (Key_gen.port ()) in
     Conduit.with_tls conduit
     >>= fun conduit ->
-    `TCP (Ipaddr.of_string_exn (Key_gen.addr ()), Key_gen.port ())
-    |> Conduit_mirage.server
-    >>= fun endp ->
+    (match Key_gen.ssl () with
+    | true ->
+      let module X509 = Tls_mirage.X509(KV)(Pclock) in
+      X509.certificate kv `Default >|= fun cert ->
+      let conf: Tls.Config.server = Tls.Config.server ~certificates:(`Single cert) () in
+     (`TLS (conf, tcp))
+    | false -> Lwt.return tcp) >>= fun tcp ->
     let server =
-      Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, endp)
+      Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, tcp)
         {map = Dict.empty; mutex = Lwt_mutex.create ()}
     in
     let msg =

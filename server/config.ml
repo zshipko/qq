@@ -18,12 +18,21 @@ let auth =
   in
   Key.(create "auth" Arg.(opt (some string) None doc))
 
+let ssl =
+  let doc =
+    Key.Arg.info ~doc:"Use SSL" ["ssl"]
+  in
+  Key.(create "ssl" Arg.(flag doc))
+
 let main =
   foreign
-    ~keys:[Key.abstract port; Key.abstract auth; Key.abstract addr]
+    ~keys:[Key.abstract port; Key.abstract auth; Key.abstract addr; Key.abstract ssl]
     ~packages:[package "resp-lwt-mirage"]
     ~deps:[abstract nocrypto] "Unikernel.Main"
-    (console @-> conduit @-> job)
+    (console @-> conduit @-> pclock @-> kv_ro @-> job)
+
+let () = try Unix.mkdir "ssl" 0o755 with _ -> ()
+let disk = generic_kv_ro "ssl"
 
 let stack = static_ipv4_stack default_network
-let () = register "qq" [main $ default_console $ conduit_direct ~tls:true stack]
+let () = register "qq" [main $ default_console $ conduit_direct ~tls:true stack $ default_posix_clock $ disk]
