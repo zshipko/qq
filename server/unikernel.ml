@@ -98,6 +98,16 @@ struct
   let wrap_lock f ctx client cmd nargs =
     Lwt_mutex.with_lock ctx.mutex (fun () -> f ctx client cmd nargs)
 
+  let wrap_error f ctx client cmd nargs =
+    Lwt.catch
+      (fun () -> f ctx client cmd nargs)
+      (function
+        | (Failure _ | Invalid_argument _) as exc ->
+          raise exc
+        | exc ->
+          Console.log ctx.console (Printexc.to_string exc)
+          >>= fun () -> failwith "unknwon error")
+
   let commands =
     [ ("push", push)
     ; ("pop", pop)
@@ -121,6 +131,7 @@ struct
     | false ->
       Lwt.return tcp )
     >>= fun tcp ->
+    let commands = List.map (fun (k, v) -> (k, wrap_error v)) commands in
     let server =
       Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, tcp)
         {map = Dict.empty; mutex = Lwt_mutex.create (); console; pclock}
