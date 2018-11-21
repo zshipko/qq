@@ -69,7 +69,7 @@ func (s *String) FromString(input string) error {
 
 // Client stores a connection to a qq server
 type Client struct {
-	*redis.Client
+	conn *redis.Client
 }
 
 // NewClient creates a new client object
@@ -90,12 +90,12 @@ func NewClient(url string, options *Options) Client {
 	}
 
 	client := redis.NewClient(&roptions)
-	return Client{client}
+	return Client{conn: client}
 }
 
 // Push a message to the server
 func (client Client) Push(key string, data Data, priority int) error {
-	_, err := client.Do("push", key, data.ToString(), priority).Result()
+	_, err := client.conn.Do("push", key, data.ToString(), priority).Result()
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (client Client) Push(key string, data Data, priority int) error {
 
 // Pop a message from the server
 func (client Client) Pop(key string, data Data) (int64, error) {
-	res, err := client.Do("pop", key).Result()
+	res, err := client.conn.Do("pop", key).Result()
 	if err != nil {
 		return -1, err
 	}
@@ -135,7 +135,7 @@ func (client Client) Pop(key string, data Data) (int64, error) {
 
 // Del removes a key from the server
 func (client Client) Del(key string) error {
-	_, err := client.Do("del", key).Result()
+	_, err := client.conn.Do("del", key).Result()
 	if err != nil {
 		return err
 	}
@@ -145,12 +145,12 @@ func (client Client) Del(key string) error {
 
 // Length returns the number of items in the queue associated with the given key
 func (client Client) Length(key string) (int64, error) {
-	return client.Do("length", key).Int64()
+	return client.conn.Do("length", key).Int64()
 }
 
 // List provides a list of available keys
 func (client Client) List() ([]string, error) {
-	res, err := client.Do("list").Result()
+	res, err := client.conn.Do("list").Result()
 	if err != nil {
 		return nil, err
 	}

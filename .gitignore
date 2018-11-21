@@ -2,3 +2,5 @@ server/*
 .merlin
 _build
 *.install
+rust/*
+go/*
