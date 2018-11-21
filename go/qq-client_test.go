@@ -17,6 +17,7 @@ func TestBasic(t *testing.T) {
 	}
 
 	if keys[0] != "test" {
+		t.Log(keys)
 		t.Fatal("Invalid list")
 	}
 }

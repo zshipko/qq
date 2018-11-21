@@ -10,3 +10,5 @@ val pop : 'a t -> ((priority * 'a) * 'a t) option
 val empty : 'a t
 val is_empty : 'a t -> bool
 val length : 'a t -> int64
+
+module Make(C: Irmin.Type.S) : Irmin.Contents.S with type t = C.t t

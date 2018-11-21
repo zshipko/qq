@@ -27,7 +27,7 @@ let ssl =
 let main =
   foreign
     ~keys:[Key.abstract port; Key.abstract auth; Key.abstract addr; Key.abstract ssl]
-    ~packages:[package "resp-lwt-mirage"]
+    ~packages:[package "resp-lwt-mirage"; package "irmin-mirage"]
     ~deps:[abstract nocrypto] "Unikernel.Main"
     (console @-> conduit @-> pclock @-> kv_ro @-> job)
 

@@ -53,3 +53,24 @@ let rec length = function
     Int64.zero
   | Node (_, _, l, r) ->
     Int64.(succ (add (length l) (length r)))
+
+module Make (Contents : Irmin.Type.S) = struct
+  type 'a q = 'a t
+  type t = Contents.t q
+
+  let t =
+    Irmin.Type.(
+      mu (fun t ->
+          variant "qq" (fun empty node -> function
+            | Empty ->
+              empty
+            | Node (p, e, l, r) ->
+              node ((p, e), l, r) )
+          |~ case0 "Empty" Empty
+          |~ case1 "Node"
+               (triple (pair int Contents.t) t t)
+               (fun ((p, e), l, r) -> Node (p, e, l, r))
+          |> sealv ))
+
+  let merge = Irmin.Merge.(option (default t))
+end
