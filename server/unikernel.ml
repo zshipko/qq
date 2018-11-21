@@ -2,10 +2,17 @@ open Mirage_types_lwt
 open Lwt.Infix
 module Dict = Map.Make (String)
 
-module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) (Pclock: PCLOCK) (KV: Mirage_kv_lwt.RO) = struct
+module Main
+    (Console : CONSOLE)
+    (Conduit : Conduit_mirage.S)
+    (Pclock : PCLOCK)
+    (KV : Mirage_kv_lwt.RO) =
+struct
   type qq =
-    { mutable map : string Resp.t Qq.t Dict.t
-    ; mutex : Lwt_mutex.t }
+    { mutable map : string Qq.t Dict.t
+    ; mutex : Lwt_mutex.t
+    ; console : Console.t
+    ; pclock : Pclock.t }
 
   module Data = struct type data = qq end
 
@@ -20,28 +27,35 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) (Pclock: PCLOCK) (K
     | None ->
       Qq.empty
 
-  let set_q ctx k v = ctx.map <- Dict.update k (fun _ -> Some v) ctx.map
-  let del_q ctx k = ctx.map <- Dict.remove k ctx.map
-
   let with_q ctx k f =
     Lwt_mutex.with_lock ctx.mutex (fun () ->
         let q = get_q ctx k in
-        let q = f q in
-        set_q ctx k q; Lwt.return_unit )
+        f q
+        >|= function
+        | Some q ->
+          ctx.map <- Dict.update k (fun _ -> Some q) ctx.map
+        | None ->
+          ctx.map <- Dict.remove k ctx.map )
 
   let push ctx client _ nargs =
-    if nargs < 2 then Server.invalid_arguments client
+    if nargs < 2 then
+      Server.discard_n client nargs
+      >>= fun () -> Server.invalid_arguments client
     else
       Server.recv_s client
       >>= fun key ->
-      Server.recv client
+      Server.recv_s client
       >>= fun item ->
       ( if nargs = 2 then Lwt.return_none
       else
         Server.recv_s client
         >|= fun p -> Some (Resp.to_string_exn p |> int_of_string) )
       >>= fun priority ->
-      with_q ctx (Resp.to_string_exn key) (fun q -> Qq.push q ?priority item)
+      Server.finish client ~nargs 3
+      >>= fun () ->
+      let item = Resp.to_string_exn item in
+      with_q ctx (Resp.to_string_exn key) (fun q ->
+          Lwt.return_some @@ Qq.push q ?priority item )
       >>= fun () -> Server.send client (`String "OK")
 
   let pop ctx client _ nargs =
@@ -50,22 +64,22 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) (Pclock: PCLOCK) (K
       Server.recv_s client
       >>= fun key ->
       let key = Resp.to_string_exn key in
-      Lwt_mutex.with_lock ctx.mutex (fun () ->
-          let q = get_q ctx key in
+      with_q ctx key (fun q ->
           match Qq.pop q with
           | None ->
-            Server.send client `Nil
+            Server.send client `Nil >>= fun () -> Lwt.return_none
           | Some ((p, e), q) ->
-            set_q ctx key q;
-            Server.send client (`Array [|e; `Integer (Int64.of_int p)|]) )
+            Server.send client
+              (`Array [|`Bulk (`Value e); `Integer (Int64.of_int p)|])
+            >>= fun () -> Lwt.return_some q )
 
   let del ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
       Server.recv_s client
       >>= fun key ->
-      del_q ctx (Resp.to_string_exn key);
-      Server.ok client
+      let key = Resp.to_string_exn key in
+      with_q ctx key (fun _ -> Lwt.return_none) >>= fun () -> Server.ok client
 
   let length ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
@@ -81,30 +95,54 @@ module Main (Console : CONSOLE) (Conduit : Conduit_mirage.S) (Pclock: PCLOCK) (K
     let x = Dict.fold (fun k _ acc -> `Bulk (`String k) :: acc) ctx.map [] in
     Server.send client (`Array (Array.of_list x))
 
-  let wrap f ctx client cmd nargs =
+  let dump ctx client _ nargs =
+    Server.discard_n client nargs
+    >>= fun () ->
+    let s = Marshal.to_string ctx.map [] in
+    Server.send client (`Bulk (`String s))
+
+  let load ctx client _ nargs =
+    if nargs < 1 then Server.invalid_arguments client
+    else
+      Server.recv_s client
+      >>= fun s ->
+      let s = Resp.to_string_exn s in
+      try
+        ctx.map <- Marshal.from_string s 0;
+        Server.ok client
+      with Invalid_argument _ -> Server.error client "Invalid argument"
+
+  let wrap_lock f ctx client cmd nargs =
     Lwt_mutex.with_lock ctx.mutex (fun () -> f ctx client cmd nargs)
 
   let commands =
     [ ("push", push)
     ; ("pop", pop)
-    ; ("length", length)
-    ; ("list", wrap list)
-    ; ("del", wrap del) ]
+    ; ("del", del)
+    ; ("length", wrap_lock length)
+    ; ("list", wrap_lock list)
+    ; ("dump", wrap_lock dump)
+    ; ("load", wrap_lock load) ]
 
-  let start console conduit _pclock kv _nocrypto =
+  let start console conduit pclock kv _nocrypto =
     let tcp = `TCP (Key_gen.port ()) in
     Conduit.with_tls conduit
     >>= fun conduit ->
-    (match Key_gen.ssl () with
+    ( match Key_gen.ssl () with
     | true ->
-      let module X509 = Tls_mirage.X509(KV)(Pclock) in
-      X509.certificate kv `Default >|= fun cert ->
-      let conf: Tls.Config.server = Tls.Config.server ~certificates:(`Single cert) () in
-     (`TLS (conf, tcp))
-    | false -> Lwt.return tcp) >>= fun tcp ->
+      let module X509 = Tls_mirage.X509 (KV) (Pclock) in
+      X509.certificate kv `Default
+      >|= fun cert ->
+      let conf : Tls.Config.server =
+        Tls.Config.server ~certificates:(`Single cert) ()
+      in
+      `TLS (conf, tcp)
+    | false ->
+      Lwt.return tcp )
+    >>= fun tcp ->
     let server =
       Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, tcp)
-        {map = Dict.empty; mutex = Lwt_mutex.create ()}
+        {map = Dict.empty; mutex = Lwt_mutex.create (); console; pclock}
     in
     let msg =
       Printf.sprintf "Running qq-server on %s:%d" (Key_gen.addr ())
