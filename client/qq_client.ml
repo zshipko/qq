@@ -11,7 +11,7 @@ module type S = sig
   module C : Resp_client.S
   module E : ENCODING
 
-  type t = C.ic * C.oc
+  type t = C.t
   type value = E.value
 
   val connect : C.params -> t Lwt.t
@@ -54,7 +54,7 @@ module Make (Client : Resp_client.S) (Encoding : ENCODING) = struct
   module C = Client
   module E = Encoding
 
-  type t = C.ic * C.oc
+  type t = C.t
   type value = E.value
 
   let connect = C.connect
