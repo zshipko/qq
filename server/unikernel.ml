@@ -15,10 +15,7 @@ struct
     ; pclock : Pclock.t }
 
   module Data = struct type data = qq end
-
-  module Server =
-    Resp_lwt_mirage.Server.Make (Resp_server.Auth.String) (Data)
-      (Resp_lwt_mirage.Bulk.String)
+  module Server = Resp_mirage.Server.Make (Resp_server.Auth.String) (Data)
 
   let get_q ctx k =
     match Dict.find_opt k ctx.map with
@@ -42,13 +39,13 @@ struct
       Server.discard_n client nargs
       >>= fun () -> Server.invalid_arguments client
     else
-      Server.recv_s client
+      Server.recv client
       >>= fun key ->
-      Server.recv_s client
+      Server.recv client
       >>= fun item ->
       ( if nargs = 2 then Lwt.return_none
       else
-        Server.recv_s client
+        Server.recv client
         >|= fun p -> Some (Resp.to_string_exn p |> int_of_string) )
       >>= fun priority ->
       Server.finish client ~nargs 3
@@ -56,12 +53,12 @@ struct
       let item = Resp.to_string_exn item in
       with_q ctx (Resp.to_string_exn key) (fun q ->
           Lwt.return_some @@ Qq.push q ?priority item )
-      >>= fun () -> Server.send client (`String "OK")
+      >>= fun () -> Server.ok client
 
   let pop ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv_s client
+      Server.recv client
       >>= fun key ->
       let key = Resp.to_string_exn key in
       with_q ctx key (fun q ->
@@ -69,14 +66,13 @@ struct
           | None ->
             Server.send client `Nil >>= fun () -> Lwt.return_none
           | Some ((p, e), q) ->
-            Server.send client
-              (`Array [|`Bulk (`Value e); `Integer (Int64.of_int p)|])
+            Server.send client (`Array [|`Bulk e; `Integer (Int64.of_int p)|])
             >>= fun () -> Lwt.return_some q )
 
   let del ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv_s client
+      Server.recv client
       >>= fun key ->
       let key = Resp.to_string_exn key in
       with_q ctx key (fun _ -> Lwt.return_none) >>= fun () -> Server.ok client
@@ -84,7 +80,7 @@ struct
   let length ctx client _ nargs =
     if nargs < 1 then Server.invalid_arguments client
     else
-      Server.recv_s client
+      Server.recv client
       >>= fun key ->
       let q = get_q ctx (Resp.to_string_exn key) in
       Server.send client (`Integer (Qq.length q))
@@ -92,7 +88,7 @@ struct
   let list ctx client _ nargs =
     Server.discard_n client nargs
     >>= fun () ->
-    let x = Dict.fold (fun k _ acc -> `Bulk (`String k) :: acc) ctx.map [] in
+    let x = Dict.fold (fun k _ acc -> `Bulk k :: acc) ctx.map [] in
     Server.send client (`Array (Array.of_list x))
 
   let wrap_lock f ctx client cmd nargs =

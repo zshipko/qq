@@ -29,8 +29,8 @@ let main =
       ; Key.abstract auth
       ; Key.abstract addr
       ; Key.abstract ssl ]
-    ~packages:[package "resp-lwt-mirage"]
-    ~deps:[abstract nocrypto] "Unikernel.Main"
+    ~packages:[package "resp-mirage"] ~deps:[abstract nocrypto]
+    "Unikernel.Main"
     (console @-> conduit @-> pclock @-> kv_ro @-> job)
 
 let () = try Unix.mkdir "ssl" 0o755 with _ -> ()
