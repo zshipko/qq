@@ -29,13 +29,13 @@ let main =
       ; Key.abstract auth
       ; Key.abstract addr
       ; Key.abstract ssl ]
-    ~packages:[package "resp-mirage"] ~deps:[abstract nocrypto]
+    ~packages:[package "resp-mirage"] ~deps:[]
     "Unikernel.Main"
     (console @-> conduit @-> pclock @-> kv_ro @-> job)
 
 let () = try Unix.mkdir "ssl" 0o755 with _ -> ()
 let disk = generic_kv_ro "ssl"
-let stack = static_ipv4_stack default_network
+let stack = static_ipv4v6_stack default_network
 
 let () =
   register "qq"

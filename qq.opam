@@ -11,8 +11,6 @@ depends:
 [
     "ocaml" {>= "4.03.0"}
     "dune"
-    "resp-client"
-    "ezjsonm"
 ]
 
 build: [

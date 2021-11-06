@@ -1,21 +1,31 @@
-open Mirage_types_lwt
 open Lwt.Infix
 module Dict = Map.Make (String)
+open Resp
 
 module Main
-    (Console : CONSOLE)
+    (Console : Mirage_console.S)
     (Conduit : Conduit_mirage.S)
-    (Pclock : PCLOCK)
-    (KV : Mirage_kv_lwt.RO) =
+    (Pclock : Mirage_clock.PCLOCK)
+    (KV : Mirage_kv.RO) =
 struct
   type qq =
     { mutable map : string Qq.t Dict.t
     ; mutex : Lwt_mutex.t
-    ; console : Console.t
-    ; pclock : Pclock.t }
+    ; console : Console.t}
 
-  module Data = struct type data = qq end
-  module Server = Resp_mirage.Server.Make (Resp_server.Auth.String) (Data)
+  module Data = struct
+    type data = qq
+
+    module Client = struct
+      type t = qq
+
+      let init x = x
+    end
+  end
+
+  module T = Conduit_mirage.TLS(Conduit)
+  module R = Resp_mirage.Make (T)
+  module Server = R.Server.Make (Resp_server.Auth.String) (Data)
 
   let get_q ctx k =
     match Dict.find_opt k ctx.map with
@@ -64,9 +74,9 @@ struct
       with_q ctx key (fun q ->
           match Qq.pop q with
           | None ->
-            Server.send client `Nil >>= fun () -> Lwt.return_none
+            Server.send client Nil >>= fun () -> Lwt.return_none
           | Some ((p, e), q) ->
-            Server.send client (`Array [|`Bulk e; `Integer (Int64.of_int p)|])
+            Server.send client (Resp.array Fun.id [|Bulk (`String e); Integer (Int64.of_int p)|])
             >>= fun () -> Lwt.return_some q )
 
   let del ctx client _ nargs =
@@ -83,13 +93,13 @@ struct
       Server.recv client
       >>= fun key ->
       let q = get_q ctx (Resp.to_string_exn key) in
-      Server.send client (`Integer (Qq.length q))
+      Server.send client (Integer (Qq.length q))
 
   let list ctx client _ nargs =
     Server.discard_n client nargs
     >>= fun () ->
-    let x = Dict.fold (fun k _ acc -> `Bulk k :: acc) ctx.map [] in
-    Server.send client (`Array (Array.of_list x))
+    let x = Dict.fold (fun k _ acc -> Resp.Bulk (`String k) :: acc) ctx.map [] in
+    Server.send client (Array (List.to_seq x))
 
   let wrap_lock f ctx client cmd nargs =
     Lwt_mutex.with_lock ctx.mutex (fun () -> f ctx client cmd nargs)
@@ -111,10 +121,8 @@ struct
     ; ("length", wrap_lock length)
     ; ("list", wrap_lock list) ]
 
-  let start console conduit pclock kv _nocrypto =
+  let start console conduit _ kv =
     let tcp = `TCP (Key_gen.port ()) in
-    Conduit.with_tls conduit
-    >>= fun conduit ->
     ( match Key_gen.ssl () with
     | true ->
       let module X509 = Tls_mirage.X509 (KV) (Pclock) in
@@ -130,7 +138,7 @@ struct
     let commands = List.map (fun (k, v) -> (k, wrap_error v)) commands in
     let server =
       Server.create ?auth:(Key_gen.auth ()) ~commands (conduit, tcp)
-        {map = Dict.empty; mutex = Lwt_mutex.create (); console; pclock}
+        {map = Dict.empty; mutex = Lwt_mutex.create (); console}
     in
     let msg =
       Printf.sprintf "Running qq-server on %s:%d" (Key_gen.addr ())
