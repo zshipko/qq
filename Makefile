@@ -5,7 +5,11 @@ build: server client
 
 .PHONY: server
 server:
-	cd server && mirage configure -t $(BACKEND) && mirage build
+	cd server && \
+		ln -sf ../src/qq.ml . && \
+		ln -sf ../src/qq.mli . && \
+		mirage configure -t $(BACKEND) && \
+		mirage build
 
 .PHONY: client
 client:
